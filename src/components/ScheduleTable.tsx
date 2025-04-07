@@ -8,17 +8,17 @@ import {
   addDoc,
   deleteDoc,
   Timestamp,
+  query,
+  where,
 } from "firebase/firestore";
 import moment from "moment";
 import "moment/locale/de";
 import { jsPDF } from "jspdf";
-import html2canvas from "html2canvas";
+import autoTable from "jspdf-autotable";
 import { FaPlus, FaFilePdf, FaTrash } from "react-icons/fa";
 
-// Deutsche Lokalisierung für Moment
 moment.locale("de");
 
-// Typendefinitionen
 interface Break {
   startZeit: string;
   endZeit: string;
@@ -38,26 +38,30 @@ interface EmployeeShift {
   startZeit: Timestamp;
   endZeit: Timestamp;
   schichten: { [date: string]: Shift };
+  userID: string;
 }
 
 interface DoppelstundenEinstellung {
   id: number;
-  wochentag: number; // 0 = Sonntag, 1 = Montag, ..., 6 = Samstag
-  startZeit: string; // Format: "HH:mm"
-  endZeit: string;   // Format: "HH:mm"
+  wochentag: number;
+  startZeit: string;
+  endZeit: string;
 }
 
 interface ScheduleTableProps {
   doppelstundenEinstellungen: DoppelstundenEinstellung[];
+  onScheduleUpdate: (shifts: EmployeeShift[], weekDays: string[]) => void;
 }
 
-// Hilfsfunktion für Fehlermeldungen
+const FaPlusIcon = FaPlus as unknown as React.FC;
+const FaFilePdfIcon = FaFilePdf as unknown as React.FC;
+const FaTrashIcon = FaTrash as unknown as React.FC;
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
 }
 
-// Funktion zum Berechnen des Montags der aktuellen Woche
 const getMonday = (d: Date) => {
   const day = d.getDay();
   const diff = day === 0 ? 6 : day - 1;
@@ -66,7 +70,7 @@ const getMonday = (d: Date) => {
   return monday;
 };
 
-const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellungen }) => {
+const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellungen, onScheduleUpdate }) => {
   const [shifts, setShifts] = useState<EmployeeShift[]>([]);
   const [startDate, setStartDate] = useState<Date>(getMonday(new Date()));
   const [loading, setLoading] = useState<boolean>(true);
@@ -79,7 +83,11 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
     );
   }, [startDate]);
 
-  // Debounce-Funktion
+  // Schichten und Wochentage an Dashboard weitergeben
+  useEffect(() => {
+    onScheduleUpdate(shifts, weekDays);
+  }, [shifts, weekDays, onScheduleUpdate]);
+
   const debounce = (func: Function, wait: number) => {
     let timeout: NodeJS.Timeout;
     return (...args: any[]) => {
@@ -88,9 +96,9 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
     };
   };
 
-  // Funktion zum Aktualisieren des Mitarbeiternamens
   const handleNameUpdate = async (id: string, newName: string) => {
-    if (!auth.currentUser) {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
       setError("⚠ Bitte logge dich ein, um Änderungen zu speichern.");
       return;
     }
@@ -105,10 +113,10 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
     }
   };
 
-  // Funktion zum Aktualisieren der Schichten
   const handleUpdate = useCallback(
     debounce(async (id: string, day: string, updatedShift: Shift) => {
-      if (!auth.currentUser) {
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
         setError("⚠ Bitte logge dich ein, um Änderungen zu speichern.");
         return;
       }
@@ -127,7 +135,6 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
     []
   );
 
-  // Funktion zum Hinzufügen einer Pause
   const addBreak = (employeeId: string, day: string) => {
     setShifts((prevShifts) =>
       prevShifts.map((s) =>
@@ -147,7 +154,6 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
     );
   };
 
-  // Funktion zum Entfernen einer Pause
   const removeBreak = (employeeId: string, day: string, pauseIndex: number) => {
     setShifts((prevShifts) =>
       prevShifts.map((s) =>
@@ -171,9 +177,9 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
     }
   };
 
-  // Funktion zum Löschen eines Mitarbeiters
   const handleDelete = async (id: string) => {
-    if (!auth.currentUser) {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
       setError("⚠ Bitte logge dich ein, um zu löschen.");
       return;
     }
@@ -190,9 +196,9 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
     }
   };
 
-  // Funktion zum Erstellen eines neuen Mitarbeiters
   const handleCreate = async () => {
-    if (!auth.currentUser) {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
       setError("⚠ Bitte logge dich ein, um einen neuen Mitarbeiter hinzuzufügen.");
       return;
     }
@@ -207,9 +213,9 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
         notizen: "",
         plattform: "web",
         doppelstunde: false,
+        userID: currentUser.uid,
       };
       const docRef = await addDoc(collection(db, "dienstplaene"), newEmployee);
-      // Synchronisiere den State sofort mit dem neuen Mitarbeiter
       setShifts((prevShifts) => [
         ...prevShifts,
         {
@@ -218,16 +224,13 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
           schichten: {},
         },
       ]);
-      console.log("Neuer Mitarbeiter hinzugefügt mit ID:", docRef.id);
     } catch (error) {
       setError(`❌ Fehler beim Erstellen des Mitarbeiters: ${getErrorMessage(error)}`);
-      console.error("Fehlerdetails:", error);
     } finally {
       setIsSaving(false);
     }
   };
 
-  // Berechnung der Gesamtstunden mit Pausen
   const calculateTotalHours = (employee: EmployeeShift, weekDays: string[]) => {
     let totalHours = 0;
     weekDays.forEach((day) => {
@@ -275,16 +278,20 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
     return totalHours.toFixed(2);
   };
 
-  // Daten aus Firestore abrufen
   useEffect(() => {
-    if (!auth.currentUser) {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
       setError("⚠ Bitte logge dich ein, um den Dienstplan zu sehen.");
       setLoading(false);
       return;
     }
     setLoading(true);
-    const unsubscribe = onSnapshot(
+    const q = query(
       collection(db, "dienstplaene"),
+      where("userID", "==", currentUser.uid)
+    );
+    const unsubscribe = onSnapshot(
+      q,
       (snapshot) => {
         const shiftData: EmployeeShift[] = snapshot.docs.map((doc) => {
           const data = doc.data();
@@ -295,6 +302,7 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
             startZeit: data.startZeit || Timestamp.fromDate(new Date()),
             endZeit: data.endZeit || Timestamp.fromDate(new Date()),
             schichten: data.schichten || {},
+            userID: data.userID,
           };
         });
         setShifts(shiftData);
@@ -309,63 +317,70 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
     return () => unsubscribe();
   }, []);
 
-  // Export als PDF ohne Aktionen
-  const exportToPDF = async () => {
-    const table = document.querySelector("table") as HTMLElement;
-    if (!table) return;
-    try {
-      const actionsColumns = table.querySelectorAll(".actions-column");
-      actionsColumns.forEach((col) => ((col as HTMLElement).style.display = "none"));
-
-      const canvas = await html2canvas(table, { scale: 2 });
-      const imgData = canvas.toDataURL("image/png");
-
-      actionsColumns.forEach((col) => ((col as HTMLElement).style.display = ""));
-
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4",
-      });
-      const imgWidth = 210;
-      const pageHeight = 297;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
-      }
-      pdf.save("dienstplan_wochenplan.pdf");
-    } catch (error) {
-      setError(`❌ Fehler beim Exportieren als PDF: ${getErrorMessage(error)}`);
+  const exportToPDF = () => {
+    if (shifts.length === 0) {
+      setError("❌ Keine Daten zum Exportieren vorhanden.");
+      return;
     }
+
+    const headers = ["Mitarbeiter", ...weekDays.map((day) => moment(day).format("ddd, DD.MM.")), "Gesamtstunden"];
+
+    const body = shifts.map((shift) => {
+      const employeeName = shift.mitarbeiterName;
+      const totalHours = calculateTotalHours(shift, weekDays);
+      const dayCells = weekDays.map((day) => {
+        const schicht = shift.schichten[day];
+        if (!schicht) return "";
+        const start = schicht.startZeit || "";
+        const end = schicht.endZeit || "";
+        const notizen = schicht.notizen || "";
+        const pausen = schicht.pausen?.map((p) => `- ${p.startZeit} - ${p.endZeit}`).join("\n") || "";
+        return `Start: ${start}\nEnde: ${end}\nNotizen: ${notizen}\nPausen:\n${pausen}`;
+      });
+      return [employeeName, ...dayCells, totalHours];
+    });
+
+    const pdf = new jsPDF({
+      orientation: "landscape",
+      unit: "mm",
+      format: "a4",
+    });
+
+    autoTable(pdf, {
+      head: [headers],
+      body: body,
+      theme: "grid",
+      styles: { fontSize: 10, cellPadding: 3 },
+      headStyles: { fillColor: [200, 200, 200], textColor: [0, 0, 0], fontStyle: "bold" },
+      columnStyles: {
+        0: { cellWidth: 30 },
+        8: { cellWidth: 20 },
+      },
+      margin: { top: 10 },
+      rowPageBreak: "avoid",
+    });
+
+    pdf.save(`dienstplan_${moment(startDate).format("DD.MM.YYYY")}.pdf`);
   };
 
   if (loading) return <div className="p-4 text-center text-gray-500">Lade Daten...</div>;
   if (error) return <div className="p-4 text-center text-red-500">{error}</div>;
 
   return (
-    <div className="bg-gray-100 min-h-screen p-6">
-      <div className="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-lg">
+    <div className="bg-gray-100 min-h-screen p-4">
+      <div className="max-w-7xl mx-auto bg-white p-6 rounded-lg shadow-lg">
         <div className="flex items-center justify-between mb-6 space-y-4 flex-col md:flex-row">
           <div className="flex space-x-4">
             <button
               onClick={() => setStartDate(new Date(startDate.setDate(startDate.getDate() - 7)))}
-              className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition"
+              className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition text-sm"
               disabled={isSaving}
             >
               ⬅ Vorherige Woche
             </button>
             <button
               onClick={() => setStartDate(new Date(startDate.setDate(startDate.getDate() + 7)))}
-              className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition"
+              className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition text-sm"
               disabled={isSaving}
             >
               Nächste Woche ➡
@@ -378,33 +393,33 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
           <div className="flex space-x-4">
             <button
               onClick={handleCreate}
-              className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-full flex items-center space-x-2 shadow-md transition"
+              className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg flex items-center space-x-2 shadow-md transition text-sm"
               disabled={isSaving}
             >
-              <FaPlus /> <span>Neuer Mitarbeiter</span>
+              <FaPlusIcon /> <span>Neuer Mitarbeiter</span>
             </button>
             <button
               onClick={exportToPDF}
-              className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-full flex items-center space-x-2 shadow-md transition"
+              className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg flex items-center space-x-2 shadow-md transition text-sm"
               disabled={isSaving}
             >
-              <FaFilePdf /> <span>Als PDF exportieren</span>
+              <FaFilePdfIcon /> <span>Als PDF exportieren</span>
             </button>
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse bg-white shadow-md rounded-lg">
-            <thead>
-              <tr className="bg-gray-200 text-gray-700">
-                <th className="p-2 border w-[120px]">Mitarbeiter</th>
+        <div className="relative overflow-x-auto max-h-[600px] overflow-y-auto">
+          <table className="w-full min-w-[1200px] border-collapse bg-white shadow-md rounded-lg text-sm">
+            <thead className="sticky top-0 bg-gray-200 text-gray-700">
+              <tr>
+                <th className="p-3 border w-[120px] text-left">Mitarbeiter</th>
                 {weekDays.map((day, index) => (
-                  <th key={index} className="p-2 border w-[50px] text-xs">
+                  <th key={index} className="p-3 border w-[150px] text-center">
                     {moment(day).format("ddd, DD.MM.")}
                   </th>
                 ))}
-                <th className="p-2 border w-[50px] text-xs">Gesamtstunden</th>
-                <th className="p-2 border w-[50px] actions-column text-xs">Aktionen</th>
+                <th className="p-3 border w-[100px] text-center">Gesamtstunden</th>
+                <th className="p-3 border w-[100px] text-center">Aktionen</th>
               </tr>
             </thead>
             <tbody>
@@ -423,12 +438,12 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
                         );
                       }}
                       onBlur={() => handleNameUpdate(shift.id, shift.mitarbeiterName)}
-                      className="w-full p-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                      className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                       disabled={isSaving}
                     />
                   </td>
                   {weekDays.map((day, index) => (
-                    <td key={index} className="p-2 border text-center w-[50px]">
+                    <td key={index} className="p-2 border text-center w-[150px]">
                       <input
                         type="time"
                         value={shift.schichten[day]?.startZeit || ""}
@@ -464,7 +479,7 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
                             pausen: [],
                           })
                         }
-                        className="w-full p-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs"
+                        className="w-full p-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                         disabled={isSaving}
                       />
                       <input
@@ -502,7 +517,7 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
                             pausen: [],
                           })
                         }
-                        className="w-full p-1 border rounded mt-1 focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs"
+                        className="w-full p-1 border rounded mt-1 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                         disabled={isSaving}
                       />
                       <textarea
@@ -539,15 +554,15 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
                             pausen: [],
                           })
                         }
-                        className="w-full p-1 border rounded mt-1 focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs"
+                        className="w-full p-1 border rounded mt-1 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                         placeholder="Notizen"
                         rows={2}
                         disabled={isSaving}
                       />
-                      <div className="mt-1">
-                        <h4 className="text-xs font-semibold">Pausen</h4>
+                      <div className="mt-2">
+                        <h4 className="text-sm font-semibold">Pausen</h4>
                         {shift.schichten[day]?.pausen?.map((pause, pauseIndex) => (
-                          <div key={pauseIndex} className="flex space-x-1 mt-1 items-center">
+                          <div key={pauseIndex} className="flex space-x-2 mt-1 items-center">
                             <input
                               type="time"
                               value={pause.startZeit || ""}
@@ -573,7 +588,7 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
                                 );
                               }}
                               onBlur={() => handleUpdate(shift.id, day, shift.schichten[day])}
-                              className="w-1/2 p-1 border rounded text-xs"
+                              className="w-1/2 p-1 border rounded text-sm"
                             />
                             <input
                               type="time"
@@ -600,35 +615,35 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ doppelstundenEinstellunge
                                 );
                               }}
                               onBlur={() => handleUpdate(shift.id, day, shift.schichten[day])}
-                              className="w-1/2 p-1 border rounded text-xs"
+                              className="w-1/2 p-1 border rounded text-sm"
                             />
                             <button
                               onClick={() => removeBreak(shift.id, day, pauseIndex)}
                               className="text-red-500 hover:text-red-700"
                             >
-                              <FaTrash />
+                              <FaTrashIcon />
                             </button>
                           </div>
                         ))}
                         <button
                           onClick={() => addBreak(shift.id, day)}
-                          className="mt-1 bg-blue-500 hover:bg-blue-600 text-white font-semibold py-1 px-2 rounded-full flex items-center space-x-1 shadow-md transition text-xs"
+                          className="mt-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold py-1 px-2 rounded-lg flex items-center space-x-1 shadow-md transition text-sm"
                         >
-                          <FaPlus /> <span>Pause hinzufügen</span>
+                          <FaPlusIcon /> <span>Pause hinzufügen</span>
                         </button>
                       </div>
                     </td>
                   ))}
-                  <td className="p-2 border text-center w-[50px] text-xs">
+                  <td className="p-2 border text-center w-[100px]">
                     {calculateTotalHours(shift, weekDays)}
                   </td>
-                  <td className="p-2 border w-[50px] actions-column">
+                  <td className="p-2 border text-center w-[100px]">
                     <button
                       onClick={() => handleDelete(shift.id)}
-                      className="bg-red-500 hover:bg-red-600 text-white font-semibold py-1 px-2 rounded-full flex items-center space-x-1 shadow-md transition text-xs"
+                      className="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-3 rounded-lg flex items-center space-x-1 shadow-md transition text-sm w-full"
                       disabled={isSaving}
                     >
-                      <FaTrash /> <span>Löschen</span>
+                      <FaTrashIcon /> <span>Löschen</span>
                     </button>
                   </td>
                 </tr>

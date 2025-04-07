@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from "react";
-import { db } from "../firebase"; // Annahme: Firebase ist in einer separaten Datei konfiguriert
-import { collection, getDocs, query, where, deleteDoc, doc } from "firebase/firestore";
+import { db, auth } from "../firebase";
+import {
+  collection,
+  query,
+  where,
+  deleteDoc,
+  doc,
+  onSnapshot,
+} from "firebase/firestore";
 
 interface Medikament {
   id: string;
@@ -10,58 +17,91 @@ interface Medikament {
   gruppe: string;
   fehlendeMenge: number;
   link: string;
-  userID: string;
+  userID?: string; // Optional, da es in einigen Dokumenten fehlen könnte
 }
 
 const MissingMedications: React.FC = () => {
   const [missingMedications, setMissingMedications] = useState<Medikament[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Funktion zum Abrufen der fehlenden Medikamente
-  const fetchMissingMedications = async () => {
-    try {
-      // Abfrage: Alle Medikamente mit fehlendeMenge > 0
-      const q = query(
-        collection(db, "medikamente"),
-        where("fehlendeMenge", ">", 0)
-      );
-
-      const querySnapshot = await getDocs(q);
-      console.log("Anzahl der abgerufenen Dokumente:", querySnapshot.size);
-
-      const meds = querySnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Medikament[];
-
-      console.log("Abgerufene Medikamente:", meds);
-      setMissingMedications(meds);
-    } catch (error) {
-      console.error("❌ Fehler beim Abrufen der fehlenden Medikamente:", error);
-      setMissingMedications([]);
+  // Echtzeit-Updates für fehlende Medikamente
+  useEffect(() => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setError("Kein Benutzer angemeldet.");
+      setLoading(false);
+      return;
     }
-  };
+
+    // Abfrage ohne userID-Filter, da es möglicherweise fehlt
+    const q = query(
+      collection(db, "medikamente"),
+      where("fehlendeMenge", ">", 0)
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const meds = snapshot.docs
+          .map((doc) => ({
+            id: doc.id,
+            name: doc.data().name || "Unbekanntes Medikament",
+            beschreibung: doc.data().beschreibung || "Keine Beschreibung",
+            tierart: doc.data().tierart || "Unbekannte Tierart",
+            gruppe: doc.data().gruppe || "Unbekannte Gruppe",
+            fehlendeMenge: doc.data().fehlendeMenge || 0,
+            link: doc.data().link || "Kein Link verfügbar",
+            userID: doc.data().userID, // Kann undefined sein
+          }))
+          .filter(
+            (med) =>
+              med.userID === undefined || med.userID === currentUser.uid
+          ) as Medikament[];
+        setMissingMedications(meds);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("❌ Fehler bei Echtzeit-Updates:", error);
+        setError("Fehler beim Abrufen der Medikamente: " + error.message);
+        setLoading(false);
+      }
+    );
+
+    // Cleanup-Funktion, um Listener zu entfernen
+    return () => unsubscribe();
+  }, []);
 
   // Funktion zum Löschen eines Medikaments
   const deleteMedikament = async (medikamentID: string) => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setError("Kein Benutzer angemeldet.");
+      return;
+    }
     try {
       await deleteDoc(doc(db, "medikamente", medikamentID));
-      console.log("✅ Medikament erfolgreich gelöscht!");
-      fetchMissingMedications(); // Liste nach dem Löschen aktualisieren
+      // Echtzeit-Updates machen eine manuelle Aktualisierung überflüssig
     } catch (error) {
       console.error("❌ Fehler beim Löschen des Medikaments:", error);
+      setError("Fehler beim Löschen des Medikaments.");
     }
   };
 
-  // Daten beim Laden der Komponente abrufen
-  useEffect(() => {
-    fetchMissingMedications();
-  }, []);
+  // Ladezustand anzeigen
+  if (loading) {
+    return <div className="text-center">Lade fehlende Medikamente...</div>;
+  }
 
+  // Fehler anzeigen
+  if (error) {
+    return <div className="text-red-500">{error}</div>;
+  }
+
+  // Benutzeroberfläche rendern
   return (
     <div className="bg-white p-6 rounded-lg shadow-md">
-      <h2 className="text-2xl font-semibold mb-4 text-gray-800">
-        Fehlende Medikamente
-      </h2>
+      <h2 className="text-2xl font-semibold mb-4 text-gray-800">Fehlende Medikamente</h2>
       {missingMedications.length === 0 ? (
         <p className="text-gray-600">✅ Keine fehlenden Medikamente vorhanden.</p>
       ) : (

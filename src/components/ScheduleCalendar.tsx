@@ -7,24 +7,29 @@ import { db, auth } from "../firebase";
 import {
   collection,
   onSnapshot,
-  setDoc,
   updateDoc,
   doc,
   Timestamp,
+  query,
+  where,
+  addDoc,
   deleteField,
 } from "firebase/firestore";
+import { FaPlus, FaTrash } from "react-icons/fa";
 
+// Deutsche Lokalisierung für Moment
 moment.locale("de");
 const localizer = momentLocalizer(moment);
 
+// Typendefinitionen
 interface Break {
   startZeit: string;
   endZeit: string;
 }
 
 interface Shift {
-  startZeit: string;
-  endZeit: string;
+  startZeit?: string;
+  endZeit?: string;
   notizen: string;
   pausen: Break[];
 }
@@ -35,34 +40,77 @@ interface Event {
   start: Date;
   end: Date;
   isBreak: boolean;
-  notizen: string;
+  shift: Shift;
+  allDay: boolean;
 }
 
+interface NewShiftData {
+  mitarbeiterName: string;
+  notizen: string;
+  startZeit: string;
+  endZeit: string;
+  dateKey: string;
+  pausen: Break[];
+}
+
+// Hilfsfunktion für Fehlermeldungen
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return "Unbekannter Fehler";
+}
+
+// Berechnung der Gesamtstunden
+const calculateTotalHours = (shift: Shift, dateKey: string): number => {
+  if (!shift.startZeit || !shift.endZeit) return 0;
+  const start = moment(`${dateKey} ${shift.startZeit}`, "YYYY-MM-DD HH:mm");
+  const end = moment(`${dateKey} ${shift.endZeit}`, "YYYY-MM-DD HH:mm");
+  let duration = end.diff(start, "hours", true);
+
+  const breaks = shift.pausen || [];
+  breaks.forEach((pause) => {
+    const breakStart = moment(`${dateKey} ${pause.startZeit}`, "YYYY-MM-DD HH:mm");
+    const breakEnd = moment(`${dateKey} ${pause.endZeit}`, "YYYY-MM-DD HH:mm");
+    if (breakStart.isValid() && breakEnd.isValid()) {
+      const overlapStart = moment.max(start, breakStart);
+      const overlapEnd = moment.min(end, breakEnd);
+      if (overlapStart.isBefore(overlapEnd)) {
+        duration -= overlapEnd.diff(overlapStart, "hours", true);
+      }
+    }
+  });
+
+  return Math.max(duration, 0);
+};
+
+// Komponente
 const ScheduleCalendar: React.FC = () => {
   const [events, setEvents] = useState<Event[]>([]);
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [view, setView] = useState<"month" | "week">("week");
+  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
+  const [newShiftData, setNewShiftData] = useState<NewShiftData>({
+    mitarbeiterName: "",
+    notizen: "",
+    startZeit: "",
+    endZeit: "",
+    dateKey: "",
+    pausen: [],
+  });
+  const [showNewShiftForm, setShowNewShiftForm] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
-  // Hilfsfunktion zum Parsen von Datum und Zeit
-  const parseDate = (dateKey: string, time: any): Date => {
-    if (time instanceof Timestamp) {
-      return time.toDate();
-    } else if (typeof time === "string") {
-      const date = moment(dateKey, "YYYY-MM-DD");
-      const [hours, minutes] = time.split(":");
-      return date
-        .clone()
-        .set({ hour: parseInt(hours), minute: parseInt(minutes) })
-        .toDate();
-    } else {
-      console.error("Ungültiges Zeitformat:", time);
-      return new Date();
-    }
+  // Datum und Zeit parsen
+  const parseDate = (dateKey: string, time: string): Date => {
+    const date = moment(dateKey, "YYYY-MM-DD");
+    const [hours, minutes] = time.split(":").map(Number);
+    return date.clone().set({ hour: hours, minute: minutes }).toDate();
   };
 
-  // Schicht in Arbeits- und Pausenzeiten aufteilen
+  // Schicht in Arbeits- und Pausenperioden aufteilen
   const splitShiftIntoPeriods = (shift: Shift, dateKey: string) => {
     const periods: { start: Date; end: Date; type: "work" | "break" }[] = [];
+    if (!shift.startZeit || !shift.endZeit) return periods;
     const start = parseDate(dateKey, shift.startZeit);
     const end = parseDate(dateKey, shift.endZeit);
     const breaks = shift.pausen || [];
@@ -86,10 +134,17 @@ const ScheduleCalendar: React.FC = () => {
     return periods;
   };
 
-  // Firestore-Daten abrufen
+  // Daten aus Firestore abrufen
   useEffect(() => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setError("⚠ Bitte logge dich ein, um den Dienstplan zu sehen.");
+      return;
+    }
+
+    const q = query(collection(db, "dienstplaene"), where("userID", "==", currentUser.uid));
     const unsubscribe = onSnapshot(
-      collection(db, "dienstplaene"),
+      q,
       (snapshot) => {
         const eventData: Event[] = [];
         snapshot.docs.forEach((doc) => {
@@ -98,30 +153,49 @@ const ScheduleCalendar: React.FC = () => {
 
           if (data.schichten && typeof data.schichten === "object") {
             Object.entries(data.schichten).forEach(([dateKey, shift]: [string, any]) => {
-              const periods = splitShiftIntoPeriods(shift, dateKey);
-              periods.forEach((period, index) => {
-                eventData.push({
-                  id: `${doc.id}|${dateKey}|${index}`,
-                  mitarbeiterName,
-                  start: period.start,
-                  end: period.end,
-                  isBreak: period.type === "break",
-                  notizen: period.type === "break" ? "Pause" : shift.notizen || "",
+              if (shift.startZeit && shift.endZeit) {
+                const periods = splitShiftIntoPeriods(shift, dateKey);
+                periods.forEach((period, index) => {
+                  eventData.push({
+                    id: `${doc.id}|${dateKey}|${index}`,
+                    mitarbeiterName,
+                    start: period.start,
+                    end: period.end,
+                    isBreak: period.type === "break",
+                    shift: {
+                      startZeit: shift.startZeit,
+                      endZeit: shift.endZeit,
+                      notizen: shift.notizen || "",
+                      pausen: shift.pausen || [],
+                    },
+                    allDay: false,
+                  });
                 });
-              });
+              } else if (shift.notizen) {
+                const start = moment(dateKey, "YYYY-MM-DD").startOf("day").toDate();
+                const end = moment(dateKey, "YYYY-MM-DD").endOf("day").toDate();
+                eventData.push({
+                  id: `${doc.id}|${dateKey}|allDay`,
+                  mitarbeiterName,
+                  start,
+                  end,
+                  isBreak: false,
+                  shift: { notizen: shift.notizen, pausen: shift.pausen || [] },
+                  allDay: true,
+                });
+              }
             });
           }
         });
         setEvents(eventData);
+        setError(null);
       },
-      (error) => {
-        console.error("Fehler beim Abrufen der Schichten:", error);
-      }
+      (error) => setError(`❌ Fehler beim Laden: ${getErrorMessage(error)}`)
     );
     return () => unsubscribe();
   }, []);
 
-  // Farben für Mitarbeiter
+  // Farben für Mitarbeiter zuweisen
   const colors = ["#FF5733", "#33FF57", "#3357FF", "#FF33A1", "#A133FF", "#33FFA1"];
   const employeeColors = new Map<string, string>();
   const uniqueEmployees = Array.from(new Set(events.map((e) => e.mitarbeiterName)));
@@ -129,28 +203,18 @@ const ScheduleCalendar: React.FC = () => {
     employeeColors.set(name, colors[index % colors.length]);
   });
 
-  // Navigation
+  // Navigationsfunktionen
   const goToNext = () =>
-    setCurrentDate(
-      moment(currentDate)
-        .add(1, view === "month" ? "months" : "weeks")
-        .toDate()
-    );
+    setCurrentDate(moment(currentDate).add(1, view === "month" ? "months" : "weeks").toDate());
   const goToPrevious = () =>
-    setCurrentDate(
-      moment(currentDate)
-        .subtract(1, view === "month" ? "months" : "weeks")
-        .toDate()
-    );
+    setCurrentDate(moment(currentDate).subtract(1, view === "month" ? "months" : "weeks").toDate());
   const goToToday = () => setCurrentDate(new Date());
 
   const formatDateRange = () => {
-    if (view === "month") {
-      return moment(currentDate).format("MMMM YYYY");
-    }
+    if (view === "month") return moment(currentDate).format("MMMM YYYY");
     const startOfWeek = moment(currentDate).startOf("isoWeek");
     const endOfWeek = moment(currentDate).endOf("isoWeek");
-    return `${startOfWeek.format("D. MMM")} - ${endOfWeek.format("D. MMM")}`;
+    return `${startOfWeek.format("DD. MMM")} - ${endOfWeek.format("DD. MMM YYYY")}`;
   };
 
   // Event-Styling
@@ -161,45 +225,55 @@ const ScheduleCalendar: React.FC = () => {
       color: "white",
       padding: "4px",
       fontSize: "11px",
-      whiteSpace: "normal",
+      whiteSpace: "normal" as const,
       boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
     };
     if (event.isBreak) {
-      return {
-        style: { ...baseStyle, backgroundColor: "#ffcc00" }, // Gelb für Pausen
-      };
+      return { style: { ...baseStyle, backgroundColor: "#ffcc00" } };
     }
     const isOverlapping = events.some(
       (e) =>
         e.id !== event.id &&
         e.mitarbeiterName === event.mitarbeiterName &&
         moment(event.start).isSame(e.start, "day") &&
-        !e.isBreak
+        !e.isBreak &&
+        !e.allDay
     );
     return {
       style: {
         ...baseStyle,
-        backgroundColor: isOverlapping
+        backgroundColor: event.allDay
+          ? "#d1d5db"
+          : isOverlapping
           ? "#f87171"
           : employeeColors.get(event.mitarbeiterName) || "#60a5fa",
       },
     };
   };
 
-  // Event-Rendering
+  // Event-Rendering mit Tooltips
   const customEventRender = ({ event }: { event: Event }) => (
-    <div className="truncate">
+    <div className="truncate" title={event.shift.notizen}>
       {event.isBreak ? (
         <strong>Pause</strong>
       ) : (
         <>
           <strong>{event.mitarbeiterName}</strong>
-          <br />
-          {moment(event.start).format("HH:mm")} - {moment(event.end).format("HH:mm")}
-          {event.notizen && (
+          {event.allDay ? (
             <>
               <br />
-              <em className="text-xs">{event.notizen}</em>
+              <em className="text-xs">{event.shift.notizen}</em>
+            </>
+          ) : (
+            <>
+              <br />
+              {moment(event.start).format("HH:mm")} - {moment(event.end).format("HH:mm")}
+              {event.shift.notizen && (
+                <>
+                  <br />
+                  <em className="text-xs">{event.shift.notizen}</em>
+                </>
+              )}
             </>
           )}
         </>
@@ -208,149 +282,416 @@ const ScheduleCalendar: React.FC = () => {
   );
 
   // Neue Schicht erstellen
-  const handleSelectSlot = async (slotInfo: SlotInfo) => {
-    if (!auth.currentUser) {
-      alert("⚠ Bitte logge dich ein, um eine Schicht zu erstellen.");
+  const handleSelectSlot = (slotInfo: SlotInfo) => {
+    const dateKey = moment(slotInfo.start).format("YYYY-MM-DD");
+    setNewShiftData({
+      mitarbeiterName: "",
+      notizen: "",
+      startZeit: moment(slotInfo.start).format("HH:mm"),
+      endZeit: moment(slotInfo.end).format("HH:mm"),
+      dateKey,
+      pausen: [],
+    });
+    setShowNewShiftForm(true);
+  };
+
+  const handleCreateShift = async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setError("⚠ Bitte logge dich ein.");
       return;
     }
-    const mitarbeiterName = prompt("Mitarbeitername:");
-    if (!mitarbeiterName) return;
+    if (!newShiftData.mitarbeiterName) {
+      setError("⚠ Mitarbeitername ist erforderlich.");
+      return;
+    }
+    if ((newShiftData.startZeit && !newShiftData.endZeit) || (!newShiftData.startZeit && newShiftData.endZeit)) {
+      setError("⚠ Start- und Endzeit müssen beide angegeben oder beide leer sein.");
+      return;
+    }
 
-    const notizen = prompt("Notizen (optional):") || "";
-    const startZeit = new Date(slotInfo.start);
-    const endZeit = new Date(startZeit.getTime() + 2 * 60 * 60 * 1000);
-    const dateKey = moment(startZeit).format("YYYY-MM-DD");
-
-    const docRef = doc(db, "dienstplaene", mitarbeiterName);
+    setIsSaving(true);
     try {
-      await updateDoc(docRef, {
-        [`schichten.${dateKey}`]: {
-          startZeit: moment(startZeit).format("HH:mm"),
-          endZeit: moment(endZeit).format("HH:mm"),
-          notizen,
-          pausen: [],
-        },
+      const { dateKey, startZeit, endZeit, notizen, mitarbeiterName, pausen } = newShiftData;
+      const shiftData: Shift = { notizen, pausen };
+      if (startZeit && endZeit) {
+        shiftData.startZeit = startZeit;
+        shiftData.endZeit = endZeit;
+      }
+
+      const q = query(
+        collection(db, "dienstplaene"),
+        where("userID", "==", currentUser.uid),
+        where("mitarbeiterName", "==", mitarbeiterName)
+      );
+      const snapshot = await new Promise((resolve) => {
+        const unsubscribe = onSnapshot(q, (snap) => {
+          resolve(snap);
+          unsubscribe();
+        });
       });
-    } catch (error: any) {
-      if (error.code === "not-found") {
-        await setDoc(docRef, {
+      if ((snapshot as any).empty) {
+        await addDoc(collection(db, "dienstplaene"), {
           mitarbeiterName,
-          schichten: {
-            [dateKey]: {
-              startZeit: moment(startZeit).format("HH:mm"),
-              endZeit: moment(endZeit).format("HH:mm"),
-              notizen,
-              pausen: [],
-            },
-          },
+          datum: Timestamp.fromDate(new Date(dateKey)),
+          schichten: { [dateKey]: shiftData },
+          userID: currentUser.uid,
         });
       } else {
-        console.error("Fehler beim Erstellen der Schicht:", error);
-        alert("Fehler beim Speichern der Schicht.");
+        const docRef = doc(db, "dienstplaene", (snapshot as any).docs[0].id);
+        await updateDoc(docRef, {
+          [`schichten.${dateKey}`]: shiftData,
+        });
       }
+      setShowNewShiftForm(false);
+      setError("✅ Schicht erfolgreich erstellt!");
+    } catch (error) {
+      setError(`❌ Fehler beim Erstellen: ${getErrorMessage(error)}`);
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  // Schicht löschen
-  const handleDeleteEvent = async (eventId: string) => {
-    if (!auth.currentUser) {
-      alert("⚠ Bitte logge dich ein, um eine Schicht zu löschen.");
+  // Event auswählen
+  const handleSelectEvent = (event: Event) => {
+    if (event.isBreak) return;
+    setSelectedEvent(event);
+  };
+
+  // Schicht speichern
+  const handleSaveShift = async (eventId: string, updatedShift: Shift) => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setError("⚠ Bitte logge dich ein.");
       return;
     }
     const [docId, dateKey] = eventId.split("|");
     const docRef = doc(db, "dienstplaene", docId);
+    setIsSaving(true);
     try {
-      await updateDoc(docRef, { [`schichten.${dateKey}`]: deleteField() });
-      alert("✅ Schicht erfolgreich gelöscht!");
+      await updateDoc(docRef, {
+        [`schichten.${dateKey}`]: updatedShift,
+      });
+      setError("✅ Schicht erfolgreich aktualisiert!");
+      setSelectedEvent(null);
     } catch (error) {
-      console.error("Fehler beim Löschen der Schicht:", error);
-      alert("Fehler beim Löschen der Schicht.");
+      setError(`❌ Fehler beim Speichern: ${getErrorMessage(error)}`);
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const handleSelectEvent = (event: Event) => {
-    if (event.isBreak) return; // Pausen nicht direkt löschbar
-    if (!auth.currentUser) {
-      alert("⚠ Bitte logge dich ein, um eine Schicht zu löschen.");
+  // Notizen löschen
+  const handleDeleteNotizen = async (eventId: string) => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setError("⚠ Bitte logge dich ein.");
       return;
     }
-    if (window.confirm("Möchten Sie diese Schicht wirklich löschen?")) {
-      handleDeleteEvent(event.id);
+    const [docId, dateKey] = eventId.split("|");
+    const docRef = doc(db, "dienstplaene", docId);
+    setIsSaving(true);
+    try {
+      await updateDoc(docRef, {
+        [`schichten.${dateKey}.notizen`]: "",
+      });
+      setError("✅ Notizen erfolgreich gelöscht!");
+      setSelectedEvent(null);
+    } catch (error) {
+      setError(`❌ Fehler beim Löschen: ${getErrorMessage(error)}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Schicht löschen
+  const handleDeleteShift = async (eventId: string) => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setError("⚠ Bitte logge dich ein.");
+      return;
+    }
+    const [docId, dateKey] = eventId.split("|");
+    const docRef = doc(db, "dienstplaene", docId);
+    setIsSaving(true);
+    try {
+      await updateDoc(docRef, {
+        [`schichten.${dateKey}`]: deleteField(), // Löscht das Schichtfeld
+      });
+      setError("✅ Schicht erfolgreich gelöscht!");
+      setSelectedEvent(null);
+    } catch (error) {
+      setError(`❌ Fehler beim Löschen: ${getErrorMessage(error)}`);
+    } finally {
+      setIsSaving(false);
     }
   };
 
   return (
-    <div className="bg-white p-6 rounded-xl shadow-lg w-full max-w-5xl mx-auto">
-      <div className="flex flex-col items-center mb-6 bg-gray-100 p-4 rounded-lg shadow-sm">
-        <div className="flex space-x-4 mb-3">
-          <button
-            onClick={goToPrevious}
-            className="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-900 transition"
-          >
-            ⬅ Zurück
-          </button>
-          <button
-            onClick={goToToday}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-800 transition"
-          >
-            📍 Heute
-          </button>
-          <button
-            onClick={goToNext}
-            className="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-900 transition"
-          >
-            Weiter ➡
-          </button>
+    <div className="bg-gray-100 min-h-screen p-4">
+      <div className="max-w-7xl mx-auto bg-white p-6 rounded-lg shadow-lg">
+        {error && <p className="text-red-500 mb-4">{error}</p>}
+        <div className="flex items-center justify-between mb-6 space-y-4 flex-col md:flex-row">
+          <div className="flex space-x-4">
+            <button
+              onClick={goToPrevious}
+              className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition text-sm"
+              disabled={isSaving}
+            >
+              ⬅ Zurück
+            </button>
+            <button
+              onClick={goToToday}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-800 transition text-sm"
+            >
+              📍 Heute
+            </button>
+            <button
+              onClick={goToNext}
+              className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition text-sm"
+              disabled={isSaving}
+            >
+              Weiter ➡
+            </button>
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800 text-center">{formatDateRange()}</h2>
+          <div className="flex space-x-4">
+            <button
+              onClick={() => setView("week")}
+              className={`px-4 py-2 rounded-lg transition ${
+                view === "week" ? "bg-blue-600 text-white" : "bg-gray-300 text-gray-800 hover:bg-gray-400"
+              }`}
+            >
+              Wochenansicht
+            </button>
+            <button
+              onClick={() => setView("month")}
+              className={`px-4 py-2 rounded-lg transition ${
+                view === "month" ? "bg-blue-600 text-white" : "bg-gray-300 text-gray-800 hover:bg-gray-400"
+              }`}
+            >
+              Monatsansicht
+            </button>
+          </div>
         </div>
-        <h3 className="text-xl font-semibold text-gray-700">{formatDateRange()}</h3>
-        <div className="flex space-x-4 mt-3">
-          <button
-            onClick={() => setView("week")}
-            className={`px-4 py-2 rounded-lg transition ${
-              view === "week"
-                ? "bg-blue-600 text-white"
-                : "bg-gray-300 text-gray-800 hover:bg-gray-400"
-            }`}
-          >
-            Wochenansicht
-          </button>
-          <button
-            onClick={() => setView("month")}
-            className={`px-4 py-2 rounded-lg transition ${
-              view === "month"
-                ? "bg-blue-600 text-white"
-                : "bg-gray-300 text-gray-800 hover:bg-gray-400"
-            }`}
-          >
-            Monatsansicht
-          </button>
-        </div>
-      </div>
 
-      <Calendar
-        localizer={localizer}
-        events={events}
-        startAccessor="start"
-        endAccessor="end"
-        style={{ height: 500 }}
-        selectable
-        views={["month", "week"]}
-        view={view}
-        date={currentDate}
-        onNavigate={(newDate) => setCurrentDate(newDate)}
-        toolbar={false}
-        eventPropGetter={eventPropGetter}
-        components={{ event: customEventRender }}
-        onSelectSlot={handleSelectSlot}
-        onSelectEvent={handleSelectEvent}
-        messages={{
-          week: "Woche",
-          month: "Monat",
-          today: "Heute",
-          previous: "Zurück",
-          next: "Weiter",
-        }}
-      />
+        <Calendar
+          localizer={localizer}
+          events={events}
+          startAccessor="start"
+          endAccessor="end"
+          style={{ height: 500 }}
+          selectable
+          views={["month", "week"]}
+          view={view}
+          date={currentDate}
+          onNavigate={(newDate) => setCurrentDate(newDate)}
+          toolbar={false}
+          eventPropGetter={eventPropGetter}
+          components={{ event: customEventRender }}
+          onSelectSlot={handleSelectSlot}
+          onSelectEvent={handleSelectEvent}
+          messages={{ week: "Woche", month: "Monat", today: "Heute", previous: "Zurück", next: "Weiter" }}
+        />
+
+        {/* Modal für neue Schicht */}
+        {showNewShiftForm && (
+          <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex justify-center items-center">
+            <div className="bg-white p-6 rounded-lg shadow-lg w-1/3">
+              <h3 className="text-xl font-semibold mb-4">Neue Schicht erstellen</h3>
+              <input
+                type="text"
+                placeholder="Mitarbeitername"
+                value={newShiftData.mitarbeiterName}
+                onChange={(e) => setNewShiftData({ ...newShiftData, mitarbeiterName: e.target.value })}
+                className="w-full p-2 border rounded mb-2"
+              />
+              <input
+                type="time"
+                value={newShiftData.startZeit}
+                onChange={(e) => setNewShiftData({ ...newShiftData, startZeit: e.target.value })}
+                className="w-full p-2 border rounded mb-2"
+              />
+              <input
+                type="time"
+                value={newShiftData.endZeit}
+                onChange={(e) => setNewShiftData({ ...newShiftData, endZeit: e.target.value })}
+                className="w-full p-2 border rounded mb-2"
+              />
+              <textarea
+                placeholder="Notizen"
+                value={newShiftData.notizen}
+                onChange={(e) => setNewShiftData({ ...newShiftData, notizen: e.target.value })}
+                className="w-full p-2 border rounded mb-4"
+                rows={2}
+              />
+              <div className="mb-4">
+                <h4 className="text-lg font-semibold">Pausen</h4>
+                {newShiftData.pausen.map((pause, index) => (
+                  <div key={index} className="flex space-x-2 mb-2 items-center">
+                    <input
+                      type="time"
+                      value={pause.startZeit}
+                      onChange={(e) => {
+                        const updatedPausen = newShiftData.pausen.map((p, i) =>
+                          i === index ? { ...p, startZeit: e.target.value } : p
+                        );
+                        setNewShiftData({ ...newShiftData, pausen: updatedPausen });
+                      }}
+                      className="p-2 border rounded w-1/2"
+                    />
+                    <input
+                      type="time"
+                      value={pause.endZeit}
+                      onChange={(e) => {
+                        const updatedPausen = newShiftData.pausen.map((p, i) =>
+                          i === index ? { ...p, endZeit: e.target.value } : p
+                        );
+                        setNewShiftData({ ...newShiftData, pausen: updatedPausen });
+                      }}
+                      className="p-2 border rounded w-1/2"
+                    />
+                    <button
+                      onClick={() => {
+                        const updatedPausen = newShiftData.pausen.filter((_, i) => i !== index);
+                        setNewShiftData({ ...newShiftData, pausen: updatedPausen });
+                      }}
+                      className="text-red-500 hover:text-red-700"
+                    >
+                      <FaTrash />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  onClick={() =>
+                    setNewShiftData({
+                      ...newShiftData,
+                      pausen: [...newShiftData.pausen, { startZeit: "", endZeit: "" }],
+                    })
+                  }
+                  className="mt-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold py-1 px-2 rounded-lg flex items-center space-x-1 shadow-md transition text-sm"
+                >
+                  <FaPlus /> <span>Pause hinzufügen</span>
+                </button>
+              </div>
+              <div className="flex justify-between">
+                <button
+                  onClick={handleCreateShift}
+                  className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 transition"
+                  disabled={isSaving}
+                >
+                  Speichern
+                </button>
+                <button
+                  onClick={() => setShowNewShiftForm(false)}
+                  className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600 transition"
+                  disabled={isSaving}
+                >
+                  Schließen
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal für Schicht bearbeiten */}
+        {selectedEvent && (
+          <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex justify-center items-center">
+            <div className="bg-white p-6 rounded-lg shadow-lg w-1/3">
+              <h3 className="text-xl font-semibold mb-4">Schicht bearbeiten</h3>
+              <textarea
+                value={selectedEvent.shift.notizen}
+                onChange={(e) =>
+                  setSelectedEvent({ ...selectedEvent, shift: { ...selectedEvent.shift, notizen: e.target.value } })
+                }
+                className="w-full p-2 border rounded mb-4"
+                rows={4}
+                placeholder="Notizen hier eingeben..."
+              />
+              <div className="mb-4">
+                <h4 className="text-lg font-semibold">Pausen</h4>
+                {selectedEvent.shift.pausen.map((pause, index) => (
+                  <div key={index} className="flex space-x-2 mb-2 items-center">
+                    <input
+                      type="time"
+                      value={pause.startZeit}
+                      onChange={(e) => {
+                        const updatedPausen = selectedEvent.shift.pausen.map((p, i) =>
+                          i === index ? { ...p, startZeit: e.target.value } : p
+                        );
+                        setSelectedEvent({ ...selectedEvent, shift: { ...selectedEvent.shift, pausen: updatedPausen } });
+                      }}
+                      className="p-2 border rounded w-1/2"
+                    />
+                    <input
+                      type="time"
+                      value={pause.endZeit}
+                      onChange={(e) => {
+                        const updatedPausen = selectedEvent.shift.pausen.map((p, i) =>
+                          i === index ? { ...p, endZeit: e.target.value } : p
+                        );
+                        setSelectedEvent({ ...selectedEvent, shift: { ...selectedEvent.shift, pausen: updatedPausen } });
+                      }}
+                      className="p-2 border rounded w-1/2"
+                    />
+                    <button
+                      onClick={() => {
+                        const updatedPausen = selectedEvent.shift.pausen.filter((_, i) => i !== index);
+                        setSelectedEvent({ ...selectedEvent, shift: { ...selectedEvent.shift, pausen: updatedPausen } });
+                      }}
+                      className="text-red-500 hover:text-red-700"
+                    >
+                      <FaTrash />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  onClick={() =>
+                    setSelectedEvent({
+                      ...selectedEvent,
+                      shift: { ...selectedEvent.shift, pausen: [...selectedEvent.shift.pausen, { startZeit: "", endZeit: "" }] },
+                    })
+                  }
+                  className="mt-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold py-1 px-2 rounded-lg flex items-center space-x-1 shadow-md transition text-sm"
+                >
+                  <FaPlus /> <span>Pause hinzufügen</span>
+                </button>
+              </div>
+              <div className="flex justify-between">
+                <button
+                  onClick={() => handleSaveShift(selectedEvent.id, selectedEvent.shift)}
+                  className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 transition"
+                  disabled={isSaving}
+                >
+                  Speichern
+                </button>
+                <button
+                  onClick={() => handleDeleteNotizen(selectedEvent.id)}
+                  className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 transition"
+                  disabled={isSaving}
+                >
+                  Notizen löschen
+                </button>
+                <button
+                  onClick={() => handleDeleteShift(selectedEvent.id)}
+                  className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition"
+                  disabled={isSaving}
+                >
+                  Schicht löschen
+                </button>
+                <button
+                  onClick={() => setSelectedEvent(null)}
+                  className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600 transition"
+                  disabled={isSaving}
+                >
+                  Schließen
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {isSaving && <div className="p-4 text-center text-yellow-500">Speichere Änderungen...</div>}
+      </div>
     </div>
   );
 };

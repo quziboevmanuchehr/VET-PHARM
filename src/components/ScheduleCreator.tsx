@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { db } from "../firebase";
+import { db, auth } from "../firebase";
 import { collection, addDoc, Timestamp } from "firebase/firestore";
 
 const ScheduleCreator: React.FC = () => {
@@ -12,7 +12,14 @@ const ScheduleCreator: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setError("⚠ Bitte logge dich ein.");
+      return;
+    }
+
+    // Validierung der Eingaben
     if (!employee.trim()) {
       setError("⚠ Mitarbeitername ist erforderlich.");
       return;
@@ -26,15 +33,24 @@ const ScheduleCreator: React.FC = () => {
       const startDateTime = new Date(startTime);
       const endDateTime = new Date(endTime);
 
+      // Prüfen, ob die Datumswerte gültig sind
+      if (isNaN(startDateTime.getTime()) || isNaN(endDateTime.getTime())) {
+        setError("⚠ Ungültiges Datum oder Uhrzeit.");
+        return;
+      }
+
       const schicht = {
         mitarbeiterName: employee.trim(),
+        datum: Timestamp.fromDate(startDateTime), // Datum der Schicht
         startZeit: Timestamp.fromDate(startDateTime),
         endZeit: Timestamp.fromDate(endDateTime),
         notizen: notes.trim() || "",
-        isDoubleShift: isDoubleShift,
+        doppelstunde: isDoubleShift,
+        userID: currentUser.uid,
+        plattform: "web",
       };
 
-      await addDoc(collection(db, "schichten"), schicht);
+      await addDoc(collection(db, "dienstplaene"), schicht);
 
       alert("✅ Dienstplan erfolgreich gespeichert!");
       setEmployee("");
@@ -50,11 +66,15 @@ const ScheduleCreator: React.FC = () => {
 
   return (
     <div className="max-w-lg mx-auto p-6 bg-white rounded-xl shadow-lg">
-      <h2 className="text-2xl font-bold text-gray-800 mb-6">📅 Neuen Dienstplan erstellen</h2>
+      <h2 className="text-2xl font-bold text-gray-800 mb-6">
+        📅 Neuen Dienstplan erstellen
+      </h2>
       {error && <p className="text-red-500 mb-4">{error}</p>}
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700">Mitarbeiter</label>
+          <label className="block text-sm font-medium text-gray-700">
+            Mitarbeiter
+          </label>
           <input
             type="text"
             value={employee}
@@ -65,7 +85,9 @@ const ScheduleCreator: React.FC = () => {
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700">Startzeit (mit Datum)</label>
+            <label className="block text-sm font-medium text-gray-700">
+              Startzeit (mit Datum)
+            </label>
             <input
               type="datetime-local"
               value={startTime}
@@ -74,7 +96,9 @@ const ScheduleCreator: React.FC = () => {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700">Endzeit</label>
+            <label className="block text-sm font-medium text-gray-700">
+              Endzeit
+            </label>
             <input
               type="datetime-local"
               value={endTime}
@@ -84,7 +108,9 @@ const ScheduleCreator: React.FC = () => {
           </div>
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700">Notizen</label>
+          <label className="block text-sm font-medium text-gray-700">
+            Notizen
+          </label>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}

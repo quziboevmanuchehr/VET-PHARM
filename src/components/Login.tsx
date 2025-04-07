@@ -11,7 +11,7 @@ const Login: React.FC = () => {
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
-    if (!email || !password) {
+    if (!email.trim() || !password.trim()) {
       setError("⚠ Bitte füllen Sie alle Felder aus.");
       return;
     }
@@ -21,7 +21,7 @@ const Login: React.FC = () => {
 
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      window.location.href = "/dashboard"; // Weiterleitung nach erfolgreichem Login
+      window.location.href = "/dashboard";
     } catch (err) {
       setError("❌ Login fehlgeschlagen: " + (err as Error).message);
     } finally {
@@ -33,7 +33,9 @@ const Login: React.FC = () => {
     <div className="login-container">
       <div className="login-card">
         <h2 className="login-title">🐾 VetPharma Login</h2>
-        <p className="login-subtitle">Melde dich an, um deinen Dienstplan zu verwalten</p>
+        <p className="login-subtitle">
+          Melde dich an, um deinen Dienstplan zu verwalten
+        </p>
 
         {error && <p className="alert alert-danger">{error}</p>}
 
@@ -58,7 +60,11 @@ const Login: React.FC = () => {
           />
         </div>
 
-        <button onClick={handleLogin} className="btn btn-primary w-100" disabled={loading}>
+        <button
+          onClick={handleLogin}
+          className="btn btn-primary w-100"
+          disabled={loading}
+        >
           {loading ? "🔄 Einloggen..." : "🚀 Login"}
         </button>
 

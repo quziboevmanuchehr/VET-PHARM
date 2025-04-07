@@ -1,17 +1,20 @@
 import React, { useState, useEffect } from "react";
-import { db, auth } from "../firebase"; // Firebase-Konfiguration wird vorausgesetzt
+import { db, auth } from "../firebase";
 import {
   collection,
   onSnapshot,
   addDoc,
   deleteDoc,
   doc,
+  query,
+  where,
 } from "firebase/firestore";
 
 interface Arzneimittel {
   id: string;
   name: string;
   lagerplatz: string;
+  userID: string;
 }
 
 const PharmacySearch: React.FC = () => {
@@ -31,7 +34,10 @@ const PharmacySearch: React.FC = () => {
       return () => {};
     }
 
-    const q = collection(db, "arzneimittel");
+    const q = query(
+      collection(db, "arzneimittel"),
+      where("userID", "==", currentUser.uid)
+    );
     const unsubscribe = onSnapshot(
       q,
       (querySnapshot) => {
@@ -39,6 +45,7 @@ const PharmacySearch: React.FC = () => {
           id: doc.id,
           name: doc.data().name as string,
           lagerplatz: doc.data().lagerplatz as string,
+          userID: doc.data().userID as string,
         }));
         setArzneimittelListe(arzneimittelData);
         setLoading(false);
@@ -70,6 +77,7 @@ const PharmacySearch: React.FC = () => {
       const neuesArzneimittel = {
         name: trimmedName,
         lagerplatz: trimmedLagerplatz,
+        userID: currentUser.uid,
       };
       await addDoc(collection(db, "arzneimittel"), neuesArzneimittel);
       setNeuerName("");
