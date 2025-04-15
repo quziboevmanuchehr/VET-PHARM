@@ -1,0 +1,37 @@
+[debug] [2025-04-15T13:35:47.415Z] [Firebase Plugin] Activating Firebase extension.
+[info] [Firebase Plugin] Checked firebase-tools, is up to date!
+[debug] [2025-04-15T13:35:59.837Z] [Firebase Plugin] VSCode notification server listening on port 40001
+[info] [Firebase Plugin] Starting Data Connect toolkit (version 1.8.5) on port 50001
+[info] i  dataconnect: downloading dataconnect-emulator-1.8.5... {"metadata":{"emulator":{"name":"dataconnect"},"message":"downloading dataconnect-emulator-1.8.5..."}}
+[debug] [2025-04-15T13:36:01.964Z] >>> [apiv2][query] GET https://storage.googleapis.com/firemat-preview-drop/emulator/dataconnect-emulator-macos-v1.8.5 
+[debug] [2025-04-15T13:36:02.730Z] <<< [apiv2][status] GET https://storage.googleapis.com/firemat-preview-drop/emulator/dataconnect-emulator-macos-v1.8.5 200
+[debug] [2025-04-15T13:36:02.731Z] <<< [apiv2][body] GET https://storage.googleapis.com/firemat-preview-drop/emulator/dataconnect-emulator-macos-v1.8.5 [stream]
+[info] i  dataconnect: Removing outdated emulator files: dataconnect-emulator-1.8.2 {"metadata":{"emulator":{"name":"dataconnect"},"message":"Removing outdated emulator files: dataconnect-emulator-1.8.2"}}
+[debug] [2025-04-15T13:36:23.266Z] I0415 15:36:22.347764    2618 control.go:59] [/emulator/y 63d9] UpdateResources(): done
+Schema: sources: schema/schema.gql [2088B] 
+Connector "default": sources: connector/mutations.gql [1233B] connector/queries.gql [1802B] 
+ {"metadata":{"emulator":{"name":"dataconnect"},"message":"I0415 15:36:22.347764    2618 control.go:59] [/emulator/y 63d9] UpdateResources(): done\nSchema: sources: schema/schema.gql [2088B] \nConnector \"default\": sources: connector/mutations.gql [1233B] connector/queries.gql [1802B] \n"}}
+[debug] [2025-04-15T13:36:23.597Z] Ignoring unsupported arg: auto_download {"metadata":{"emulator":{"name":"dataconnect"},"message":"Ignoring unsupported arg: auto_download"}}
+[debug] [2025-04-15T13:36:23.598Z] Ignoring unsupported arg: port {"metadata":{"emulator":{"name":"dataconnect"},"message":"Ignoring unsupported arg: port"}}
+[debug] [2025-04-15T13:36:23.598Z] Starting Data Connect Emulator with command {"binary":"/Users/manuchehr/.cache/firebase/emulators/dataconnect-emulator-1.8.5","args":["--logtostderr","-v=2","dev","--listen=localhost:50001","--config_dir=/Users/manuchehr/Desktop/vetpharm/dataconnect","--enable_output_schema_extensions=true","--enable_output_generated_sdk=true"],"optionalArgs":["listen","config_dir","enable_output_schema_extensions","enable_output_generated_sdk"],"joinArgs":true,"shell":false,"port":9399} {"metadata":{"emulator":{"name":"dataconnect"},"message":"Starting Data Connect Emulator with command {\"binary\":\"/Users/manuchehr/.cache/firebase/emulators/dataconnect-emulator-1.8.5\",\"args\":[\"--logtostderr\",\"-v=2\",\"dev\",\"--listen=localhost:50001\",\"--config_dir=/Users/manuchehr/Desktop/vetpharm/dataconnect\",\"--enable_output_schema_extensions=true\",\"--enable_output_generated_sdk=true\"],\"optionalArgs\":[\"listen\",\"config_dir\",\"enable_output_schema_extensions\",\"enable_output_generated_sdk\"],\"joinArgs\":true,\"shell\":false,\"port\":9399}"}}
+[info] i  dataconnect: Data Connect Emulator logging to dataconnect-debug.log {"metadata":{"emulator":{"name":"dataconnect"},"message":"Data Connect Emulator logging to dataconnect-debug.log"}}
+[debug] [2025-04-15T13:36:28.560Z] I0415 15:36:28.532680    2991 load.go:37] Reloading schema and connectors...
+ {"metadata":{"emulator":{"name":"dataconnect"},"message":"I0415 15:36:28.532680    2991 load.go:37] Reloading schema and connectors...\n"}}
+[debug] [2025-04-15T13:36:28.891Z] I0415 15:36:28.889597    2991 control.go:59] [/emulator/y 3108] UpdateResources(): done
+Schema: sources: schema/schema.gql [2088B] 
+Connector "default": sources: connector/mutations.gql [1233B] connector/queries.gql [1802B] 
+ {"metadata":{"emulator":{"name":"dataconnect"},"message":"I0415 15:36:28.889597    2991 control.go:59] [/emulator/y 3108] UpdateResources(): done\nSchema: sources: schema/schema.gql [2088B] \nConnector \"default\": sources: connector/mutations.gql [1233B] connector/queries.gql [1802B] \n"}}
+[debug] [2025-04-15T13:36:28.950Z] I0415 15:36:28.948731    2991 codegen.go:82] [connector "default" javascriptSdk] Generating sources into "/Users/manuchehr/Desktop/vetpharm/dataconnect-generated/js/default-connector"
+ {"metadata":{"emulator":{"name":"dataconnect"},"message":"I0415 15:36:28.948731    2991 codegen.go:82] [connector \"default\" javascriptSdk] Generating sources into \"/Users/manuchehr/Desktop/vetpharm/dataconnect-generated/js/default-connector\"\n"}}
+[debug] [2025-04-15T13:36:29.010Z] I0415 15:36:29.010121    2991 collector.go:107] schema extensions wrote into "/Users/manuchehr/Desktop/vetpharm/dataconnect/.dataconnect/schema"
+Generated sources: prelude.gql [67020B] 
+ {"metadata":{"emulator":{"name":"dataconnect"},"message":"I0415 15:36:29.010121    2991 collector.go:107] schema extensions wrote into \"/Users/manuchehr/Desktop/vetpharm/dataconnect/.dataconnect/schema\"\nGenerated sources: prelude.gql [67020B] \n"}}
+[debug] [2025-04-15T13:36:29.014Z] I0415 15:36:29.014082    2991 collector.go:107] connector "default" javascriptSdk wrote into "/Users/manuchehr/Desktop/vetpharm/dataconnect-generated/js/default-connector"
+Generated sources: react/index.d.ts [228B] react/esm/package.json [17B] react/index.cjs.js [0B] react/README.md [5443B] index.cjs.js [141B] package.json [895B] README.md [2800B] react/package.json [468B] react/esm/index.esm.js [0B] index.d.ts [246B] esm/index.esm.js [105B] esm/package.json [17B] 
+ {"metadata":{"emulator":{"name":"dataconnect"},"message":"I0415 15:36:29.014082    2991 collector.go:107] connector \"default\" javascriptSdk wrote into \"/Users/manuchehr/Desktop/vetpharm/dataconnect-generated/js/default-connector\"\nGenerated sources: react/index.d.ts [228B] react/esm/package.json [17B] react/index.cjs.js [0B] react/README.md [5443B] index.cjs.js [141B] package.json [895B] README.md [2800B] react/package.json [468B] react/esm/index.esm.js [0B] index.d.ts [246B] esm/index.esm.js [105B] esm/package.json [17B] \n"}}
+[debug] [2025-04-15T13:36:29.026Z] I0415 15:36:29.025704    2991 installsdk.go:48] Package @firebasegen/default-connector is already installed. Skipping installation
+I0415 15:36:29.025853    2991 load.go:115] Finished reloading
+ {"metadata":{"emulator":{"name":"dataconnect"},"message":"I0415 15:36:29.025704    2991 installsdk.go:48] Package @firebasegen/default-connector is already installed. Skipping installation\nI0415 15:36:29.025853    2991 load.go:115] Finished reloading\n"}}
+[debug] [2025-04-15T13:36:29.093Z] I0415 15:36:29.090102    2991 dev.go:95] Listening on address (HTTP + gRPC): 127.0.0.1:50001
+ {"metadata":{"emulator":{"name":"dataconnect"},"message":"I0415 15:36:29.090102    2991 dev.go:95] Listening on address (HTTP + gRPC): 127.0.0.1:50001\n"}}
+[error] [Firebase Plugin] error:  {}

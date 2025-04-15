@@ -13,10 +13,11 @@ const App: React.FC = () => {
       setUser(currentUser);
       setLoading(false);
     });
+
     return () => unsubscribe();
   }, []);
 
-  if (loading) return (<p>Loading...</p>);
+  if (loading) return <p>Loading...</p>;
 
   return user ? <Dashboard /> : <Login />;
 };
